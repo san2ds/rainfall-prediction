@@ -1,0 +1,40 @@
+rain_model4 = lm(
+  log(Rainfall) ~ (
+    Location + log(Evaporation + 0.1) + Sunshine +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Temp9am
+  ) ^ 2 + (
+    sin(Date * pi / 6) + cos(Date * pi / 6) +
+      sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3)
+  ) * (
+    Location + log(Evaporation + 0.1) + Sunshine +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Temp9am
+  ) + (sin(Date * pi / 6) + cos(Date * pi / 6)) * (
+    sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3)
+  ) + (sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8)) * (
+    sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3)
+  ) + (sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8)) * (
+    Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3) +
+      (Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3)) *
+      (Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3))
+  ),
+  data = subset(weather_trn, Rainfall > 0)
+)
+
+sqrt(mean((weather_tst$Rainfall -
+             exp(predict(rain_model4, newdata = weather_tst))) ^ 2))
+
+
+get_plot("fitted vs residuals", "qqplot", rain_model4)
+hist(resid(rain_model4), main="Histogram using Sinosoidal Weather", col = "gold")
+

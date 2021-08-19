@@ -1,0 +1,286 @@
+rainModel = lm(Rainfall ~ Date + Location + Evaporation +
+                 Sunshine + Humidity9am + Humidity3pm  +
+                 Pressure9am + Pressure3pm + Cloud9am +
+                 I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4) + 
+                 Cloud3pm + Temp9am + Temp3pm + RainToday,
+               data = weather_trn)
+
+# Backward AIC
+
+best_aic_mod_4_b = step(rainModel, direction = 'backward', trace = 0)
+
+# Backward BIC
+
+best_bic_mod_4_b = step(rainModel, direction = 'backward',
+                      k = log(length(resid(rainModel))), trace = 0)
+
+rain_for_model = lm(Rainfall ~ 1, data = weather_trn)
+
+# Forward AIC
+
+best_aic_mod_4_f = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+# Forward BIC
+
+best_bic_mod_4_f = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, 
+    k = log(length(resid(rainModel))),trace = 0)
+
+# Stepwise search in both direction
+
+# Stepwise Both direction AIC
+
+best_aic_mod_4_s = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+
+# Stepwise both direction BIC
+
+best_bic_mod_4_s = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm +  Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, 
+    k = log(length(resid(rainModel))),trace = 0)
+
+
+# get plots
+par(mfrow = c(6, 3))
+get_plot('Fitted VS Residuals plot \nof AIC backward', 
+         'QQ plot of AIC backward',
+         best_aic_mod_4_b)
+
+hist(resid(best_aic_mod_4_b), main = "Histogram of AIC Backward\nVersion 1")
+get_plot('Fitted VS Residuals plot \nof BIC backward', 
+         'QQ plot of BIC backward',
+         best_bic_mod_4_b)
+hist(resid(best_bic_mod_4_b), main = "Histogram of BIC Backward\nVersion 2")
+get_plot('Fitted VS Residuals plot \nof AIC forward', 
+         'QQ plot of AIC forward',
+         best_aic_mod_4_f)
+hist(resid(best_aic_mod_4_f), main = "Histogram of AIC Forward\nVersion 3")
+get_plot('Fitted VS Residuals plot \nof BIC forward', 
+         'QQ plot of BIC forward',
+         best_bic_mod_4_f)
+hist(resid(best_bic_mod_4_f), main = "Histogram of BIC Forward\nVersion 4")
+get_plot('Fitted VS Residuals plot \nof AIC stepwise', 
+         'QQ plot of AIC stepwise',
+         best_aic_mod_4_s)
+hist(resid(best_aic_mod_4_s), main = "Histogram of AIC Stepwise\nVersion 5")
+get_plot('Fitted VS Residuals plot \nof BIC stepwise', 
+         'QQ plot of BIC stepwise',
+         best_bic_mod_4_s)
+hist(resid(best_bic_mod_4_s), main = "Histogram of BIC Stepwise\nVersion 6")
+
+# Table RSS, Adjusted R square and LOOCV RMSE
+
+
+Model_names = c(
+  'Best Backward AIC', 'Best Backward BIC',
+  'Best Forward AIC', 'Best Forward BIC',
+  'Best Stepwise AIC', 'Best Stepwise BIC'
+)
+
+RMSE_vals = c(
+  calc_RMSE(fitted(best_aic_mod_4_b), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_b), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_aic_mod_4_f), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_f), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_aic_mod_4_s), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_s), weather_trn$Rainfall)
+)
+
+Adj_r_sqr_vals = c(
+  summary(best_aic_mod_4_b)$adj.r.squared,
+  summary(best_bic_mod_4_b)$adj.r.squared,
+  summary(best_aic_mod_4_f)$adj.r.squared,
+  summary(best_bic_mod_4_f)$adj.r.squared,
+  summary(best_aic_mod_4_s)$adj.r.squared,
+  summary(best_bic_mod_4_s)$adj.r.squared
+)
+
+Loocv_rmse_vals = c(
+  calc_loocv_rmse(best_aic_mod_4_b),
+  calc_loocv_rmse(best_bic_mod_4_b),
+  calc_loocv_rmse(best_aic_mod_4_f),
+  calc_loocv_rmse(best_bic_mod_4_f),
+  calc_loocv_rmse(best_aic_mod_4_s),
+  calc_loocv_rmse(best_bic_mod_4_s)
+)
+
+# Set info for the table to compare
+
+compare_val = data.frame(
+  Model_names, RMSE_vals, Adj_r_sqr_vals, Loocv_rmse_vals
+)
+
+library(knitr)
+
+kable(compare_val, padding = 5, caption = "Stats for Best Models")
+
+# Best train model's info
+
+coef(best_aic_mod_4_f)
+length(coef(best_aic_mod_4_f))
+
+# Fit the model with TEST data 
+
+test_pred_val = predict(best_aic_mod_4_f, newdata = weather_tst)
+
+test_adj_r_sqr_val = 
+  test_adj_r_sqr(test_pred_val, weather_tst$Rainfall, best_aic_mod_4_f)
+
+test_RMSE = calc_RMSE(test_pred_val, weather_tst$Rainfall)
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step4 = c(
+  calc_RMSE(fitted(best_aic_mod_4_f), weather_trn$Rainfall),
+  test_RMSE
+)
+
+Adj_r_sqr_vals_step4 = c(
+  summary(best_aic_mod_4_f)$adj.r.squared, test_adj_r_sqr_val
+)
+
+
+# Set info for the table to compare
+
+compare_val_step4 = data.frame(
+  Model_info, RMSE_vals_step4, Adj_r_sqr_vals_step4
+)
+
+
+kable(compare_val_step4, padding = 5)
+
+# Use forward AIC to get model after removing influential points
+
+weather_trn_subset = subset(weather_trn, (cooks.distance(best_aic_mod_4_f) <= (4/nrow(weather_trn))))
+
+rain_for_model_alt = lm(Rainfall ~ 1, data = weather_trn_subset)
+
+# Forward AIC
+
+best_aic_mod_4_f_alt = step(rain_for_model_alt,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+# Best model's predictors info
+
+coef(best_aic_mod_4_f_alt)
+length(coef(best_aic_mod_4_f_alt))
+
+# Get predicted values using new best forward AIC
+
+test_pred_val_alt = predict(best_aic_mod_4_f_alt, newdata = weather_tst)
+
+# get adj R^2 and RMSE
+
+test_adj_r_sqr_val_alt = 
+  test_adj_r_sqr(test_pred_val_alt, weather_tst$Rainfall, best_aic_mod_4_f_alt)
+
+test_RMSE_alt = calc_RMSE(test_pred_val_alt, weather_tst$Rainfall)
+
+# Get table
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info_alt = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step4_alt = c(
+  calc_RMSE(fitted(best_aic_mod_4_f_alt), weather_trn_subset$Rainfall),
+  test_RMSE_alt
+)
+
+Adj_r_sqr_vals_step4_alt = c(
+  summary(best_aic_mod_4_f_alt)$adj.r.squared, test_adj_r_sqr_val_alt
+)
+
+
+# Set info for the table to compare
+
+compare_val_step4_alt = data.frame(
+  Model_info_alt, RMSE_vals_step4_alt, Adj_r_sqr_vals_step4_alt
+)
+
+
+kable(compare_val_step4_alt, padding = 5)
+
+weather_step_5_aic= lm(Rainfall ~ (Humidity9am 
+                        + Humidity3pm + Pressure3pm + Evaporation)*RainToday 
+                        + Pressure9am
+                        + I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4),
+                     data = weather_trn)
+
+
+summary(weather_step_5_aic)
+summary(weather_step_5_aic)$r.square
+
+coef(weather_step_5_aic)
+
+get_plot('Fitted VS Residuals \nplot of AIC backward Step5', 
+         'QQ plot \nof AIC backward Step 5',
+         weather_step_5_aic)
+
+hist(resid(weather_step_5_aic), main = "Histogram for \nAIC backward step 5")
+#boxcox(weather_step_5_aic, lambda = seq(-0.50, 0.50, by = 0.02), plotit = TRUE)
+
+# Get predicted values using new best forward AIC
+
+test_pred_val_5 = predict(weather_step_5_aic, newdata = weather_tst)
+
+# get adj R^2 and RMSE
+
+test_adj_r_sqr_val_5 = 
+  test_adj_r_sqr(test_pred_val_5, weather_tst$Rainfall, weather_step_5_aic)
+
+test_RMSE_5 = calc_RMSE(test_pred_val_5, weather_tst$Rainfall)
+
+# Get table
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info_5 = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step5_5 = c(
+  calc_RMSE(fitted(weather_step_5_aic), weather_trn$Rainfall),
+  test_RMSE_5
+)
+
+Adj_r_sqr_vals_step5_5 = c(
+  summary(weather_step_5_aic)$adj.r.squared, test_adj_r_sqr_val_5
+)
+
+
+# Set info for the table to compare
+
+compare_val_step5_5 = data.frame(
+  Model_info_5, RMSE_vals_step5_5, Adj_r_sqr_vals_step5_5
+)
+
+
+kable(compare_val_step5_5, padding = 5)
+

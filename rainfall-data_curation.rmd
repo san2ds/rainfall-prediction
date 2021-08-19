@@ -1,0 +1,58 @@
+library(readr)
+library(MASS)
+
+weatherAUS = subset(na.omit(read.csv("weatherAUS.csv")), select = -c(RainTomorrow))
+
+weather1 = weatherAUS
+
+weather1$Location[which(weather1$Location == "MelbourneAirport")] = "Melbourne"
+weather1$Location[which(weather1$Location == "SydneyAirport")] = "Sydney"
+weather1$Location[which(weather1$Location == "PerthAirport")] = "Perth"
+
+wind_num = function(windDir) {
+  windDir[windDir == "N"] = 0
+  windDir[windDir == "NNE"] = 1
+  windDir[windDir == "NE"] = 2
+  windDir[windDir == "ENE"] = 3
+  windDir[windDir == "E"] = 4
+  windDir[windDir == "ESE"] = 5
+  windDir[windDir == "SE"] = 6
+  windDir[windDir == "SSE"] = 7
+  windDir[windDir == "S"] = 8
+  windDir[windDir == "SSW"] = 9
+  windDir[windDir == "SW"] = 10
+  windDir[windDir == "WSW"] = 11
+  windDir[windDir == "W"] = 12
+  windDir[windDir == "WNW"] = 13
+  windDir[windDir == "NW"] = 14
+  windDir[windDir == "NNW"] = 15
+  as.numeric(windDir)
+}
+
+
+weather1$WindGustDir = wind_num(weather1$WindGustDir)
+weather1$WindDir9am = wind_num(weather1$WindDir9am)
+weather1$WindDir3pm = wind_num(weather1$WindDir3pm)
+
+weather_subset = c()
+
+for(loc in c("AliceSprings", "Brisbane", "Cairns", "Darwin", "Melbourne", "Mildura", "MountGambier", "NorfolkIsland", "Perth", "Sydney", "WaggaWagga", "Watsonia", "Woomera")) { 
+  weather_subset = rbind(weather_subset, subset(weather1, weather1$Location == loc)) 
+  }
+
+weather = weather_subset
+
+weather$RainToday = as.factor(weather$RainToday)
+
+weather$Date = lubridate::month(weather$Date)
+
+
+weather$Location = as.factor(weather$Location)
+
+set.seed(42)
+trn_num = round(nrow(weather) * 0.4,0)
+trn_idx = runif(trn_num, 1, nrow(weather))
+# Test is 40%
+weather_tst = weather[trn_idx,]
+# Train is 60%
+weather_trn = weather[ -trn_idx,]

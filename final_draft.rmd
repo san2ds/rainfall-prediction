@@ -1,0 +1,1927 @@
+---
+title: "Rainfall Prediction"
+author: "Hartman, Peter; Hong, Ron; Banerjee, Santu; Manning, Colton"
+date: "8/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r functions, echo = FALSE}
+# Create function to plot Fitted vs Residuals and QQ plots
+
+get_plot = function(name_desc_fit, name_desc_qq, lm_mod){
+  
+  par(mfrow = c(1, 3))
+  
+  # Fitted vs Residuals plot
+  plot(fitted(lm_mod), resid(lm_mod), col = "darkblue", pch = 20,
+       xlab = "Fitted", ylab = "Residuals", main = name_desc_fit)
+  abline(h = 0, col = "darkorange", lwd = 2)
+     
+  # QQ plot
+  
+  qqnorm(resid(lm_mod), main = name_desc_qq, col = "darkgreen")
+  qqline(resid(lm_mod), col = "dodgerblue", lwd = 2)
+     
+}
+
+# Function to calculate LOOCV RMSE
+
+calc_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+
+# Function to calculate RMSE
+
+calc_RMSE = function(pred_vals, actual_vals){
+  sqrt(mean((pred_vals - actual_vals) ^ 2))
+}
+
+# Function to calculate TEST adjusted R square
+
+test_adj_r_sqr = function(pred_val, actual_val, lm_mod){
+  p = length(coef(lm_mod))
+  n = length(pred_val)
+  test_r_sqr = 1 - ((sum((actual_val - pred_val)^2)) / 
+                      (sum((actual_val - mean(actual_val))^2)))
+  adj_r_sqr = 1 - (((n - 1)/(n - p)) * (1 - (test_r_sqr ^ 2)))
+  
+}
+
+make_conf_mat = function(predicted, actual) {
+table(predicted = predicted, actual = actual)
+}
+
+```
+
+# Stat 420 Data Project
+## Predicting Rainfall in Australia
+
+### Introduction
+  
+Australia is an amazing continent. It has practically every biome imaginable, with the exception of tundra or permafrost. With vast deserts, winding mountain ranges, swamps and marshes, and some of the most amazing coastlines, the geography and associated weather of Australia produces a widely varied amount of rainfall.
+  
+This project will look at rainfall amounts in varied geographical regions in Australia. It will devise a model to try to fit the data, and predict the amount of rainfall given humidity and other factors.
+
+### Data Curation
+
+```{r data_curation, echo = FALSE}
+library(readr)
+library(MASS)
+
+weatherAUS = subset(na.omit(read.csv("weatherAUS.csv")), select = -c(RainTomorrow))
+
+weather1 = weatherAUS
+
+weather1$Location[which(weather1$Location == "MelbourneAirport")] = "Melbourne"
+weather1$Location[which(weather1$Location == "SydneyAirport")] = "Sydney"
+weather1$Location[which(weather1$Location == "PerthAirport")] = "Perth"
+
+wind_num = function(windDir) {
+  windDir[windDir == "N"] = 0
+  windDir[windDir == "NNE"] = 1
+  windDir[windDir == "NE"] = 2
+  windDir[windDir == "ENE"] = 3
+  windDir[windDir == "E"] = 4
+  windDir[windDir == "ESE"] = 5
+  windDir[windDir == "SE"] = 6
+  windDir[windDir == "SSE"] = 7
+  windDir[windDir == "S"] = 8
+  windDir[windDir == "SSW"] = 9
+  windDir[windDir == "SW"] = 10
+  windDir[windDir == "WSW"] = 11
+  windDir[windDir == "W"] = 12
+  windDir[windDir == "WNW"] = 13
+  windDir[windDir == "NW"] = 14
+  windDir[windDir == "NNW"] = 15
+  as.numeric(windDir)
+}
+
+
+weather1$WindGustDir = wind_num(weather1$WindGustDir)
+weather1$WindDir9am = wind_num(weather1$WindDir9am)
+weather1$WindDir3pm = wind_num(weather1$WindDir3pm)
+
+weather_subset = c()
+
+for(loc in c("AliceSprings", "Brisbane", "Cairns", "Darwin", "Melbourne", "Mildura", "MountGambier", "NorfolkIsland", "Perth", "Sydney", "WaggaWagga", "Watsonia", "Woomera")) { 
+  weather_subset = rbind(weather_subset, subset(weather1, weather1$Location == loc)) 
+  }
+
+weather = weather_subset
+
+weather$RainToday = as.factor(weather$RainToday)
+
+weather$Date = lubridate::month(weather$Date)
+
+
+weather$Location = as.factor(weather$Location)
+
+set.seed(42)
+trn_num = round(nrow(weather) * 0.4,0)
+trn_idx = runif(trn_num, 1, nrow(weather))
+# Test is 40%
+weather_tst = weather[trn_idx,]
+# Train is 60%
+weather_trn = weather[ -trn_idx,]
+
+```
+
+For this project, we decided to use the "Rain in Australia" dataset, homed on Kaggle at: \n https://www.kaggle.com/jsphyg/weather-dataset-rattle-package.
+  
+This dataset consists of 23 variables with 145,460 observations. While this is a thorough dataset, many of the variables are factors of others, and some are consistently missing values. Data curation is needed to remove and consolidate the data as needed.
+  
+First, we combined the airport observations with the associated city observations. The airports were close to the cities to count as additional observations.
+
+Next, we removed those predictors which were constantly NA, or were consumed in other predictors. In this case, we removed RainTomorrow, Min and Max temp, and wind speed.
+
+Wind Direction was turned into a dummy variable, with x16 coordinates.
+
+Finally, we limited the locations to specific cities. 
+  
+```{r location_table, echo = FALSE}
+locations = c("AliceSprings", "Brisbane", "Cairns", "Darwin", "Melbourne", "Mildura", "MountGambier", "NorfolkIsland", "Perth", "Sydney", "WaggaWagga", "Watsonia", "Woomera", "Canberra", "Cobar", "CoffsHarbour", "Hobart", "Moree", "Nuriootpa", "Portland", "Sale", "Townsville", "Williamtown" )
+observations = c(2223, 2953, 2444, 3062, 4827, 2594, 2465, 2464, 5938, 4560, 2416, 2730, 1734, 1078, 534, 1380, 1939, 1913, 2008, 1863, 1678, 2419, 1198)
+geography = c("Subtropical Desert", "Coastal Flatland", "Coastal Rainforest", "Coastal Flatland", "Coastal Mountain", "Flatland", "Mountain", "Island Mountain", "Coastal Flatland", "Coastal Mountain", "Flatland", "Coastal Mountain", "Desert", "Wetlands", "Semi-Arid", "Coastal Mountain", "Coastal Mountain", "Flatland", "Coastal Flatland", "Coastal Flatland", "Coastal Flatland", "Coastal Flatland", "Coastal Flatland")
+Use = c("Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "Yes", "No", "No", "No", "No", "No", "No", "No", "No", "No", "No")
+Location_table = data.frame("Locations" = locations, "Observations" = observations, "Geography" = geography, "Use" = Use)
+library(knitr)
+kable(Location_table)
+```
+
+As seen from this table, we selected locations with at least 2000 observations per location, as well as a good cross-section of geographies. We kept Woomera with 1734 observations in the data in order to have a desert biome in the cross-section. 
+
+We then set the date to only use the month section, as we did not care about the year.
+
+Several of our predictors could be considered factors, so we explicitly set Date, Location, and RainToday as factors.
+
+Finally, we created out test and training data sets, setting the test data set to 40% of the total observations, and the training data set to the remaining 60%.
+
+Our settings and calculations can be found in Appendix B
+
+## Description of Variables
+### "Date"        
+The date of observation
+
+### "Location"
+The common name of the location of the weather station
+
+### "MinTemp"       
+The minimum temperature in degrees celsius
+
+### "MaxTemp" 
+The maximum temperature in degrees celsius
+
+### "Rainfall"
+The amount of rainfall recorded for the day in mm
+
+### "Evaporation"
+The so-called Class A pan evaporation (mm) in the 24 hours to 9am
+
+### "Sunshine"
+The number of hours of bright sunshine in the day.
+
+### "WindGustDir"
+The direction of the strongest wind gust in the 24 hours to midnight
+
+### "WindGustSpeed"
+The speed (km/h) of the strongest wind gust in the 24 hours to midnight
+
+### "WindDir9am"
+Direction of the wind at 9am
+
+### "WindDir3pm"
+Direction of the wind at 3pm
+
+### "WindSpeed9am"
+Wind speed (km/hr) averaged over 10 minutes prior to 9am
+
+### "WindSpeed3pm"
+Wind speed (km/hr) averaged over 10 minutes prior to 3pm
+
+### "Humidity9am"
+Humidity (percent) at 9am
+
+### "Humidity3pm"
+Humidity (percent) at 3pm
+
+### "Pressure9am"
+Atmospheric pressure (hpa) reduced to mean sea level at 9am
+
+### "Pressure3pm"
+Atmospheric pressure (hpa) reduced to mean sea level at 3pm
+
+### "Cloud9am"
+Fraction of sky obscured by cloud at 9am. This is measured in "oktas", which are a unit of eigths. It records how many eigths of the sky are obscured by cloud. A 0 measure indicates completely clear sky whilst an 8 indicates that it is completely overcast.
+
+### "Cloud3pm"
+Fraction of sky obscured by cloud (in "oktas": eighths) at 3pm. See Cload9am for a description of the values
+
+### "Temp9am"
+Temperature (degrees C) at 9am
+
+### "Temp3pm"
+Temperature (degrees C) at 3pm
+
+### "RainToday"
+Boolean: 1 if precipitation (mm) in the 24 hours to 9am exceeds 1mm, otherwise 0
+
+### "RainTomorrow"
+The amount of next day rain in mm. Used to create response variable RainTomorrow. A kind of measure of the "risk".
+
+### Model Selection
+
+
+
+After looking at all of these additive models, we look at these methods of creating models, we try different methods.
+
+First, we try an additive model. We began with an additive model that contained no predictors, and ran a forwards stepwise search, with AIC and BIC, to try to find a model that fit the data.
+```{r colton_leaps, echo = FALSE}
+library(leaps)
+```
+
+```{r colton_additive_1, echo = TRUE}
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+forward_AIC = step(mod_start, scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday, direction = "forward", trace = 0)
+forward_BIC = step(mod_start, scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday, direction = "forward", trace = 0, k = log(nrow(weather_trn)))
+```
+
+This produced two similar models, shown here with $anova tables:
+```{r colton_additive_calls, echo = TRUE}
+summary(forward_AIC)$call
+forward_AIC$anova
+
+summary(forward_BIC)$call
+forward_BIC$anova
+
+```
+
+```{r colton_additive_anovas, echo = FALSE, eval = FALSE}
+forward_AIC$anova
+forward_BIC$anova
+```
+
+Next, we did the same with a backwards search. We started with all of the predictors, and ran the stepwise search backwards to generate calls that might help narrow down the model.
+
+```{r colton_additive_2, echo = TRUE}
+mod_start_bkw = lm(Rainfall ~ ., data = weather_trn)
+backward_AIC = step(mod_start_bkw, direction = "backward", trace = 0)
+backward_BIC = step(mod_start_bkw, direction = "backward", k = log(nrow(weather_trn)), trace = 0)
+```
+
+This produced two calls, again shown with $anova tables:
+```{r colton_additive_2_calls}
+summary(backward_AIC)$call
+backward_AIC$anova
+
+
+summary(backward_BIC)$call
+backward_BIC$anova
+
+```
+
+```{r colton_additive_2_anovas, echo = FALSE, eval = FALSE}
+backward_AIC$anova
+backward_BIC$anova
+```
+
+Finally, the group tried a both direction search:
+```{r colton_both_1, echo = TRUE}
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+stepwise_AIC = step(mod_start, scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday, direction = "both", trace = 0)
+stepwise_BIC = step(mod_start, scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday, direction = "both", trace = 0, k = log(nrow(weather_trn)))
+```
+Again, shown with $anova tables:
+```{r colton_both_calls, echo = TRUE}
+summary(stepwise_AIC)$call
+stepwise_AIC$anova
+
+
+summary(stepwise_BIC)$call
+stepwise_BIC$anova
+
+```
+
+```{r colton_both_anova, echo = FALSE, eval = FALSE}
+stepwise_AIC$anova
+stepwise_BIC$anova
+```
+After looking at the additive-only models, no interaction, calculating LOOCV and RMSE, and looking at the adjusted $R^2$, we get:
+```{r colton_model_compare, echo = FALSE}
+
+forward_AIC_RMSE_loocv = calc_loocv_rmse(forward_AIC)
+forward_BIC_RMSE_loocv = calc_loocv_rmse(forward_BIC)
+
+backward_AIC_RMSE_loocv = calc_loocv_rmse(backward_AIC)
+backward_BIC_RMSE_loocv = calc_loocv_rmse(backward_BIC)
+
+stepwise_AIC_RMSE_loocv = calc_loocv_rmse(stepwise_AIC)
+stepwise_BIC_RMSE_loocv = calc_loocv_rmse(stepwise_BIC)
+
+forward_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_AIC, newdata = weather_tst)) ^ 2))
+forward_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_BIC, newdata = weather_tst)) ^ 2))
+
+backward_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_AIC, newdata = weather_tst)) ^ 2))
+backward_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_BIC, newdata = weather_tst)) ^ 2))
+
+stepwise_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_AIC, newdata = weather_tst)) ^ 2))
+stepwise_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_BIC, newdata = weather_tst)) ^ 2))
+
+forward_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_AIC)
+forward_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_BIC)
+
+backward_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_AIC)
+backward_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_BIC)
+
+stepwise_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_AIC)
+stepwise_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_BIC)
+
+df_table = data.frame(RSME_loocv = c(forward_AIC_RMSE_loocv, forward_BIC_RMSE_loocv, backward_AIC_RMSE_loocv, backward_BIC_RMSE_loocv, stepwise_AIC_RMSE_loocv, stepwise_BIC_RMSE_loocv), 
+                      RMSE_test = c(forward_AIC_RMSE, forward_BIC_RMSE, backward_AIC_RMSE, backward_BIC_RMSE, stepwise_AIC_RMSE, stepwise_BIC_RMSE),
+                      adjusted_r_squared = c(forward_AIC_adj_r_sq, forward_BIC_adj_r_sq, backward_AIC_adj_r_sq, backward_BIC_adj_r_sq, stepwise_AIC_adj_r_sq, stepwise_BIC_adj_r_sq),
+                      model_call = c(toString(forward_AIC$call), toString(forward_BIC$call), toString(backward_AIC$call), toString(backward_BIC$call), toString(stepwise_AIC$call), toString(stepwise_BIC$call)),
+                      row.names = c("forward_AIC", "forward_BIC", "backward_AIC", "backward_BIC", "stepwise_AIC", "stepwise_BIC"))
+
+knitr::kable(df_table)
+```
+With an adjusted $R^2$ around .10, it is obvious that an additive-only model would not work. We will need to try some interactions.
+
+```{r colton_interaction_1, echo = TRUE}
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+forward_AIC_int = step(mod_start, scope = Rainfall ~ (Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday + Date) * Location, direction = "forward", trace = 0)
+forward_BIC_int = step(mod_start, scope = Rainfall ~ (Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday + Date) * Location, direction = "forward", trace = 0, k = log(nrow(weather_trn)))
+```
+After starting with no predictors, we move forwards stepwise with interactions on Location.
+```{r colton_interaction_calls, echo = FALSE}
+summary(forward_AIC_int)$call
+forward_AIC_int$anova
+
+summary(forward_BIC_int)$call
+forward_BIC_int$anova
+
+```
+
+```{r colton_interaction_anovas, echo = FALSE, eval = FALSE}
+forward_AIC_int$anova
+forward_BIC_int$anova
+```
+
+```{r colton_int_back}
+mod_start = lm(Rainfall ~ (Date + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday) * Location, data = weather_trn)
+backward_AIC_int = step(mod_start, direction = "backward", trace = 0)
+backward_BIC_int = step(mod_start, direction = "backward", k = log(nrow(weather_trn)), trace = 0)
+```
+
+```{r colton_int_calls}
+summary(backward_AIC_int)$call
+backward_AIC_int$anova
+
+summary(backward_BIC_int)$call
+backward_BIC_int$anova
+
+```
+
+```{r colton_int_anova, echo = FALSE, eval = FALSE}
+backward_AIC_int$anova
+backward_BIC_int$anova
+```
+
+And stepwise search:
+
+```{r colton_back_step}
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+stepwise_AIC_int = step(mod_start, scope = Rainfall ~ (Date + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday) * Location, direction = "both", trace = 0)
+stepwise_BIC_int = step(mod_start, scope = Rainfall ~ (Date + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday) * Location, direction = "both", trace = 0, k = log(nrow(weather_trn)))
+```
+
+```{r colton_back_step_calls, echo = FALSE}
+summary(stepwise_AIC_int)$call
+stepwise_AIC_int$anova
+
+summary(stepwise_BIC_int)$call
+stepwise_BIC_int$anova
+
+```
+
+
+```{r colton_back_step_anovas, echo = FALSE, eval = FALSE}
+stepwise_AIC_int$anova
+stepwise_BIC_int$anova
+```
+
+Looking at the interaction models, we get:
+```{r colton_back_review, echo = FALSE}
+
+forward_AIC_int_RMSE_loocv = calc_loocv_rmse(forward_AIC_int)
+forward_BIC_int_RMSE_loocv = calc_loocv_rmse(forward_BIC_int)
+
+backward_AIC_int_RMSE_loocv = calc_loocv_rmse(backward_AIC_int)
+backward_BIC_int_RMSE_loocv = calc_loocv_rmse(backward_BIC_int)
+
+stepwise_AIC_int_RMSE_loocv = calc_loocv_rmse(stepwise_AIC_int)
+stepwise_BIC_int_RMSE_loocv = calc_loocv_rmse(stepwise_BIC_int)
+
+forward_AIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_AIC_int, newdata = weather_tst)) ^ 2))
+forward_BIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_BIC_int, newdata = weather_tst)) ^ 2))
+
+backward_AIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_AIC_int, newdata = weather_tst)) ^ 2))
+backward_BIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_BIC_int, newdata = weather_tst)) ^ 2))
+
+stepwise_AIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_AIC_int, newdata = weather_tst)) ^ 2))
+stepwise_BIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_BIC_int, newdata = weather_tst)) ^ 2))
+
+forward_AIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_AIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_AIC_int)
+forward_BIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_BIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_BIC_int)
+
+backward_AIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_AIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_AIC_int)
+backward_BIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_BIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_BIC_int)
+
+stepwise_AIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_AIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_AIC_int)
+stepwise_BIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_BIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_BIC_int)
+
+df_table = data.frame(RSME_loocv = c(forward_AIC_int_RMSE_loocv, forward_BIC_int_RMSE_loocv, backward_AIC_int_RMSE_loocv, backward_BIC_int_RMSE_loocv, stepwise_AIC_int_RMSE_loocv, stepwise_BIC_int_RMSE_loocv), 
+                      RMSE_test = c(forward_AIC_int_RMSE, forward_BIC_int_RMSE, backward_AIC_int_RMSE, backward_BIC_int_RMSE, stepwise_AIC_int_RMSE, stepwise_BIC_int_RMSE),
+                      adjusted_r_squared = c(forward_AIC_int_adj_r_sq, forward_BIC_int_adj_r_sq, backward_AIC_int_adj_r_sq, backward_BIC_int_adj_r_sq, stepwise_AIC_int_adj_r_sq, stepwise_BIC_int_adj_r_sq),
+                      model_call = c(toString(forward_AIC_int$call), toString(forward_BIC_int$call), toString(backward_AIC_int$call), toString(backward_BIC_int$call), toString(stepwise_AIC_int$call), toString(stepwise_BIC_int$call)),
+                      row.names = c("forward_AIC_int", "forward_BIC_int", "backward_AIC_int", "backward_BIC_int", "stepwise_AIC_int", "stepwise_BIC_int"))
+
+knitr::kable(df_table)
+```
+
+> The best AIC model is `backward_AIC_int`
+
+```{r colton_coda_1, echo = FALSE}
+backward_AIC_int$call
+hist(resid(backward_AIC_int), main = "Histogram for \nAIC backward using\n Additive Interactions")
+get_plot('Fitted VS Residuals plot\nof AIC backward using\nAdditive and Interactions', 
+         'QQ plot of AIC backward\nusing Additive and Interactions',
+         backward_AIC_int)
+
+```
+
+> The best BIC model is `backward_BIC_int`
+
+```{r colton_coda_2, echo = FALSE}
+backward_BIC_int$call
+hist(resid(backward_AIC_int), main = "Histogram for \nBIC backward using\n Additive Interactions")
+get_plot('Fitted VS Residuals plot\nof BIC backward using\nAdditive and Interactions', 
+         'QQ plot of BIC backward\nusing Additive and Interactions',
+         backward_AIC_int)
+```
+
+There were some possible outliers. We calculated cook's distance on these, removed the outliers, and refit the models:
+```{r colton_outliers_1, echo = FALSE}
+
+
+cooks_AIC = sort(cooks.distance(backward_AIC_int)[cooks.distance(backward_AIC_int) > 4 / length(backward_AIC_int$fitted.values)], decreasing = TRUE)[1:10]
+#cooks_AIC
+cooks_BIC = sort(cooks.distance(backward_BIC_int)[cooks.distance(backward_BIC) > 4 / length(backward_BIC_int$fitted.values)], decreasing = TRUE)[1:10]
+#cooks_BIC
+
+weather_rmv_obs_AIC = weather_trn[rownames(weather_trn) != "88223", ] #weather_trn[-(AIC_ind), ]
+weather_rmv_obs_BIC = weather_trn[rownames(weather_trn) != "88223", ]
+
+AIC_refit = lm(formula = Rainfall ~ (Date + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday) * Location, data = weather_rmv_obs_AIC)
+BIC_refit = lm(formula = Rainfall ~ Evaporation + Sunshine + Humidity9am + Pressure9am + Temp9am + RainToday + Location + 
+                                    Evaporation:Location + Humidity9am:Location + Pressure9am:Location + Temp9am:Location + 
+                                    RainToday:Location, data = weather_rmv_obs_BIC)
+
+AIC_refit_RMSE_loocv = calc_loocv_rmse(AIC_refit)
+BIC_refit_RMSE_loocv = calc_loocv_rmse(BIC_refit)
+
+AIC_refit_RMSE = sqrt(mean((weather_tst$Rainfall - predict(AIC_refit, newdata = weather_tst)) ^ 2))
+BIC_refit_RMSE = sqrt(mean((weather_tst$Rainfall - predict(BIC_refit, newdata = weather_tst)) ^ 2))
+
+AIC_refit_adj_r_sq = test_adj_r_sqr(pred_val = predict(AIC_refit, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = AIC_refit)
+BIC_refit_adj_r_sq = test_adj_r_sqr(pred_val = predict(BIC_refit, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = BIC_refit)
+
+df_table = data.frame(RSME_loocv = c(AIC_refit_RMSE_loocv, BIC_refit_RMSE_loocv), 
+                      RMSE_test = c(AIC_refit_RMSE, BIC_refit_RMSE),
+                      adjusted_r_squared = c(AIC_refit_adj_r_sq, BIC_refit_adj_r_sq),
+                      model_call = c(toString(AIC_refit$call), toString(BIC_refit$call)),
+                      row.names = c("AIC_refit", "BIC_refit"))
+
+knitr::kable(df_table)
+```
+
+We also looked at other methods for finding models. We looked at the higher order method for finding models. Noticing that cloud cover played a roll in rainfall, we took higher order terms for cloud cover, then ran backward, forward, and stepwise models with AIC and BIC, to try to find the best fit.
+```{r santu_higher_1, echo = FALSE}
+rainModel = lm(Rainfall ~ Date + Location + Evaporation +
+                 Sunshine + Humidity9am + Humidity3pm  +
+                 Pressure9am + Pressure3pm + Cloud9am +
+                 I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4) + 
+                 Cloud3pm + Temp9am + Temp3pm + RainToday,
+               data = weather_trn)
+
+# Backward AIC
+
+best_aic_mod_4_b = step(rainModel, direction = 'backward', trace = 0)
+
+# Backward BIC
+
+best_bic_mod_4_b = step(rainModel, direction = 'backward',
+                      k = log(length(resid(rainModel))), trace = 0)
+
+rain_for_model = lm(Rainfall ~ 1, data = weather_trn)
+
+# Forward AIC
+
+best_aic_mod_4_f = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+# Forward BIC
+
+best_bic_mod_4_f = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, 
+    k = log(length(resid(rainModel))),trace = 0)
+
+# Stepwise search in both direction
+
+# Stepwise Both direction AIC
+
+best_aic_mod_4_s = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+
+# Stepwise both direction BIC
+
+best_bic_mod_4_s = step(rain_for_model,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm +  Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, 
+    k = log(length(resid(rainModel))),trace = 0)
+
+
+```
+After creating several models, we plotted them fitted vs residuals, as well as qq plots and histograms:
+```{r santu_higher_plots, echo = FALSE}
+
+# get plots
+par(mfrow = c(6, 3))
+get_plot('Fitted VS Residuals plot \nof AIC backward', 
+         'QQ plot of AIC backward',
+         best_aic_mod_4_b)
+
+hist(resid(best_aic_mod_4_b), main = "Histogram of AIC Backward\nVersion 1")
+get_plot('Fitted VS Residuals plot \nof BIC backward', 
+         'QQ plot of BIC backward',
+         best_bic_mod_4_b)
+hist(resid(best_bic_mod_4_b), main = "Histogram of BIC Backward\nVersion 2")
+get_plot('Fitted VS Residuals plot \nof AIC forward', 
+         'QQ plot of AIC forward',
+         best_aic_mod_4_f)
+hist(resid(best_aic_mod_4_f), main = "Histogram of AIC Forward\nVersion 3")
+get_plot('Fitted VS Residuals plot \nof BIC forward', 
+         'QQ plot of BIC forward',
+         best_bic_mod_4_f)
+hist(resid(best_bic_mod_4_f), main = "Histogram of BIC Forward\nVersion 4")
+get_plot('Fitted VS Residuals plot \nof AIC stepwise', 
+         'QQ plot of AIC stepwise',
+         best_aic_mod_4_s)
+hist(resid(best_aic_mod_4_s), main = "Histogram of AIC Stepwise\nVersion 5")
+get_plot('Fitted VS Residuals plot \nof BIC stepwise', 
+         'QQ plot of BIC stepwise',
+         best_bic_mod_4_s)
+hist(resid(best_bic_mod_4_s), main = "Histogram of BIC Stepwise\nVersion 6")
+```
+```{r santu_higher_table, echo = FALSE}
+
+# Table RSS, Adjusted R square and LOOCV RMSE
+
+
+Model_names = c(
+  'Best Backward AIC', 'Best Backward BIC',
+  'Best Forward AIC', 'Best Forward BIC',
+  'Best Stepwise AIC', 'Best Stepwise BIC'
+)
+
+RMSE_vals = c(
+  calc_RMSE(fitted(best_aic_mod_4_b), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_b), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_aic_mod_4_f), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_f), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_aic_mod_4_s), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_s), weather_trn$Rainfall)
+)
+
+Adj_r_sqr_vals = c(
+  summary(best_aic_mod_4_b)$adj.r.squared,
+  summary(best_bic_mod_4_b)$adj.r.squared,
+  summary(best_aic_mod_4_f)$adj.r.squared,
+  summary(best_bic_mod_4_f)$adj.r.squared,
+  summary(best_aic_mod_4_s)$adj.r.squared,
+  summary(best_bic_mod_4_s)$adj.r.squared
+)
+
+Loocv_rmse_vals = c(
+  calc_loocv_rmse(best_aic_mod_4_b),
+  calc_loocv_rmse(best_bic_mod_4_b),
+  calc_loocv_rmse(best_aic_mod_4_f),
+  calc_loocv_rmse(best_bic_mod_4_f),
+  calc_loocv_rmse(best_aic_mod_4_s),
+  calc_loocv_rmse(best_bic_mod_4_s)
+)
+
+# Set info for the table to compare
+
+compare_val = data.frame(
+  Model_names, RMSE_vals, Adj_r_sqr_vals, Loocv_rmse_vals
+)
+
+library(knitr)
+
+kable(compare_val, padding = 5, caption = "Stats for Best Models")
+
+```
+
+Based on the above table values it seems Best Forward AIC is the best model since it has lowest LOOCV RMSE, RSS and highest adjusted R square.
+
+We can see that the coefficients and number of predictors looks favorable.
+```{r santu_best_train, echo = FALSE}
+# Best train model's info
+
+coef(best_aic_mod_4_f)
+length(coef(best_aic_mod_4_f))
+
+```
+
+
+```{r santu_best_test, echo = FALSE}
+
+# Fit the model with TEST data 
+
+test_pred_val = predict(best_aic_mod_4_f, newdata = weather_tst)
+
+```
+
+```{r santu_adj_r_1, echo = FALSE}
+
+test_adj_r_sqr_val = 
+  test_adj_r_sqr(test_pred_val, weather_tst$Rainfall, best_aic_mod_4_f)
+
+test_RMSE = calc_RMSE(test_pred_val, weather_tst$Rainfall)
+
+```
+
+```{r santu_adj_r_2, echo = FALSE}
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step4 = c(
+  calc_RMSE(fitted(best_aic_mod_4_f), weather_trn$Rainfall),
+  test_RMSE
+)
+
+Adj_r_sqr_vals_step4 = c(
+  summary(best_aic_mod_4_f)$adj.r.squared, test_adj_r_sqr_val
+)
+
+
+# Set info for the table to compare
+
+compare_val_step4 = data.frame(
+  Model_info, RMSE_vals_step4, Adj_r_sqr_vals_step4
+)
+
+
+kable(compare_val_step4, padding = 5)
+
+```
+We find `r sum(cooks.distance(best_aic_mod_4_f) > (4/nrow(weather_trn)))` influential points with this model. 
+
+Next we we step this model forward, removing the influential points. We can see the coefficients of the model below look a little better: 
+
+```{r santu_forward_aic, echo = FALSE}
+# Use forward AIC to get model after removing influential points
+
+weather_trn_subset = subset(weather_trn, (cooks.distance(best_aic_mod_4_f) <= (4/nrow(weather_trn))))
+
+rain_for_model_alt = lm(Rainfall ~ 1, data = weather_trn_subset)
+
+# Forward AIC
+
+best_aic_mod_4_f_alt = step(rain_for_model_alt,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+# Best model's predictors info
+
+coef(best_aic_mod_4_f_alt)
+length(coef(best_aic_mod_4_f_alt))
+
+```
+  
+And we can look at the variations between the Train and Test data applied to this model.
+
+```{r santu_forward_aic_vals, echo = FALSE}
+
+# Get predicted values using new best forward AIC
+
+test_pred_val_alt = predict(best_aic_mod_4_f_alt, newdata = weather_tst)
+
+# get adj R^2 and RMSE
+
+test_adj_r_sqr_val_alt = 
+  test_adj_r_sqr(test_pred_val_alt, weather_tst$Rainfall, best_aic_mod_4_f_alt)
+
+test_RMSE_alt = calc_RMSE(test_pred_val_alt, weather_tst$Rainfall)
+
+# Get table
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info_alt = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step4_alt = c(
+  calc_RMSE(fitted(best_aic_mod_4_f_alt), weather_trn_subset$Rainfall),
+  test_RMSE_alt
+)
+
+Adj_r_sqr_vals_step4_alt = c(
+  summary(best_aic_mod_4_f_alt)$adj.r.squared, test_adj_r_sqr_val_alt
+)
+
+
+# Set info for the table to compare
+
+compare_val_step4_alt = data.frame(
+  Model_info_alt, RMSE_vals_step4_alt, Adj_r_sqr_vals_step4_alt
+)
+
+
+kable(compare_val_step4_alt, padding = 5)
+
+
+```
+
+Finally, we take what we've learned to create our final model. 
+
+When adding log transformation in Rainfall then calculated Train RMSE and TEST Adjusted R^2 is value is very low.
+
+Adding interaction and Polynomial transformation and only including significant predictors, we have selected below model.
+
+
+
+```{r santu_best_model, echo = FALSE}
+
+
+weather_step_5_aic= lm(Rainfall ~ (Humidity9am 
+                        + Humidity3pm + Pressure3pm + Evaporation)*RainToday 
+                        + Pressure9am
+                        + I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4),
+                     data = weather_trn)
+
+
+summary(weather_step_5_aic)
+summary(weather_step_5_aic)$r.square
+
+```
+with an adjusted $R^2$ of `r summary(weather_step_5_aic)$adj.r.squared`, and the following coefficients: 
+```{r santu_best_model_coef}
+coef(weather_step_5_aic)
+
+```
+using `r length(coef(weather_step_5_aic))` predictors. Below we can see the plots and histogram for this model.
+
+```{r santu_best_model_plots, echo = FALSE}
+
+get_plot('Fitted VS Residuals \nplot of AIC backward Step5', 
+         'QQ plot \nof AIC backward Step 5',
+         weather_step_5_aic)
+
+hist(resid(weather_step_5_aic), main = "Histogram for \nAIC backward step 5")
+#boxcox(weather_step_5_aic, lambda = seq(-0.50, 0.50, by = 0.02), plotit = TRUE)
+```
+
+
+```{r santu_best_model_vals, echo = FALSE}
+
+# Get predicted values using new best forward AIC
+
+test_pred_val_5 = predict(weather_step_5_aic, newdata = weather_tst)
+
+# get adj R^2 and RMSE
+
+test_adj_r_sqr_val_5 = 
+  test_adj_r_sqr(test_pred_val_5, weather_tst$Rainfall, weather_step_5_aic)
+
+test_RMSE_5 = calc_RMSE(test_pred_val_5, weather_tst$Rainfall)
+
+# Get table
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info_5 = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step5_5 = c(
+  calc_RMSE(fitted(weather_step_5_aic), weather_trn$Rainfall),
+  test_RMSE_5
+)
+
+Adj_r_sqr_vals_step5_5 = c(
+  summary(weather_step_5_aic)$adj.r.squared, test_adj_r_sqr_val_5
+)
+
+
+# Set info for the table to compare
+
+compare_val_step5_5 = data.frame(
+  Model_info_5, RMSE_vals_step5_5, Adj_r_sqr_vals_step5_5
+)
+
+
+kable(compare_val_step5_5, padding = 5)
+
+
+```
+
+
+We are selecting this model since it is using only **`r length(coef(weather_step_5_aic))`** predictors for the fitted model.
+
+And as per above table, Test RMSE value is very close to Train RMSE value. Though TEST Adjusted R Square value is lower than Train Adjusted R square value, we found this model is a good fitted model since it is using less number of predictors and its probability of prediction is very good compare to other models that we selected before.
+
+It is also possible that wind direction may play a role in the development of rainfall. After many experiments (please see Appendix D), the group tried a sinosoidal variation of wind direction, combined with interactions from above.
+
+```{r ron_rain_model_int, echo = TRUE}
+rain_model4 = lm(
+  log(Rainfall) ~ (
+    Location + log(Evaporation + 0.1) + Sunshine +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Temp9am
+  ) ^ 2 + (
+    sin(Date * pi / 6) + cos(Date * pi / 6) +
+      sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3)
+  ) * (
+    Location + log(Evaporation + 0.1) + Sunshine +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Temp9am
+  ) + (sin(Date * pi / 6) + cos(Date * pi / 6)) * (
+    sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3)
+  ) + (sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8)) * (
+    sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3)
+  ) + (sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8)) * (
+    Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3) +
+      (Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3)) *
+      (Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3))
+  ),
+  data = subset(weather_trn, Rainfall > 0)
+)
+```
+The $R^2$ for this model is `r summary(rain_model4)$r.squared`. Calculating the LOOCV RMSE, we get `r sqrt(mean((resid(rain_model4) / (1 - hatvalues(rain_model4))) ^ 2))`.
+
+We can test against the test dataset: 
+```{r ron_tain_model5_tst, echo = TRUE}
+sqrt(mean((weather_tst$Rainfall -
+             exp(predict(rain_model4, newdata = weather_tst))) ^ 2))
+```
+To get the following plots:
+```{r ron_rain_model4_qq, echo = TRUE}
+get_plot("fitted vs residuals", "qqplot", rain_model4)
+hist(resid(rain_model4), main="Histogram using Sinosoidal Weather", col = "gold")
+
+```
+
+
+# Results
+
+Predicting rainfall is very difficult. We found several models that may do the job credibly. In our selected model, we state that humidity, pressure, and cloud cover all combine in intricate ways to generate the possibility of rainfall.
+
+Our best model took the log of the amount of Rainfall as the response, and large interactions between clouds, wind direction, humidity, pressure, and location as the predictors. The final model call looked like:
+
+> lm(Rainfall ~ (Humidity9am 
+>                        + Humidity3pm + Pressure3pm + Evaporation)*RainToday 
+>                        + Pressure9am
+>                        + I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4),
+>                     data = weather_trn)
+
+# Discussion
+
+There are many different types of cloud cover. As such, it was necessary to provide specific higher order interactions amongst the other predictors. Wind speed and direction turned out to be a driving force as well, and mathematical sin transforms were needed to account for the direction. In order for the data to be fit properly, the log of predictors Evaporation, WindSpeed9am, and WindSpeed3pm was needed. 
+
+Predicting using this model produces results in fairly accurate confidence intervals.
+
+Predicting the weather is very hard. There are currently 15 major global and regional weather models (https://windy.app/blog/what-is-a-weather-forecast-model-guide-on-forecast-models-all-around-the-world.html), each with different inputs and mathematical computations. Our model is simple by comparison, but reacts well given the limited input and time constraints. 
+
+# Appendices
+## Appendix A: Group Members
+- Peter Hartman (pehartma@illinois.edu)
+- Santu Banerjee (santub2@illinois.edu)
+- Colton Manning (coltonm4@illinois.edu)
+- Ron Hong (ronaldh3@illinois.edu)
+
+## Appendix B: Data Curation Methods
+
+These are the methods we used to curate the data into a useable form.
+
+```{r Appendix_B1, ref.label=c('data_curation'), eval = FALSE}
+```
+
+As well as the table creation.
+
+```{r Appendix_B2, ref.label=c('location_table'), eval = FALSE}
+```
+
+## Appendix C: Functions
+
+We needed several standard functions throughout our project.
+```{r Appendix_C1, ref.label=c('functions'), eval = FALSE}
+```
+
+## Appendix D: Raw results from Ron
+The first thing our team did was look at the multicollinarity of the data:
+```{r vif, echo = TRUE, eval = TRUE}
+car::vif(lm(Rainfall ~ . - RainToday, data = weather_trn))
+```
+
+Pressure, Temperature, Humidity3pm, and Location all have a VIF over 5, so they are all cause for concern.
+
+Removing those factors, excluding Location, and the VIF values are much less of a concern.
+```{r vif2, echo = TRUE, eval = TRUE}
+car::vif(lm(Rainfall ~ . - RainToday - Humidity3pm - Pressure9am - Pressure3pm - Temp9am - Temp3pm, data = weather_trn))
+```
+
+When looking at the log mean of Rainfall per month, we can see when the more rainy seasons are:
+
+```{r meanRainfall, echo = TRUE, eval = TRUE}
+meanRainfall = function(predictor) {
+  meanRainfallSub = rep(0, length(unique(predictor)))
+  for (i in 1:length(unique(predictor))) {
+    meanRainfallSub[i] =
+      mean(subset(weather_trn, predictor == unique(predictor)[i])$Rainfall)
+  }
+  meanRainfallSub
+}
+
+plot(
+  unique(weather_trn$Date),
+  log(meanRainfall(weather_trn$Date)),
+  xlab = "Month",
+  ylab = "log(Rainfall)",
+  col = "darkblue",
+  pch = 20
+)
+```
+
+Next, the team tried plotting the log of rainfall vs the log of other predictors, to see if the log of the predictors fit better.
+
+```{r logPlots1, echo = TRUE, eval = TRUE}
+par(mfrow = c(1, 2))
+plot(
+  log(Rainfall) ~ Evaporation,
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+plot(
+  log(Rainfall) ~ log(Evaporation),
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+
+```
+```{r logPlots2, echo = TRUE, eval = TRUE}
+par(mfrow = c(1, 2))
+plot(
+  log(Rainfall) ~ Sunshine,
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+plot(
+  log(Rainfall) ~ log(Sunshine),
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+
+```
+```{r logPlots3, echo = TRUE, eval = TRUE}
+par(mfrow = c(1, 2))
+plot(
+  log(Rainfall) ~ WindSpeed9am,
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+plot(
+  log(Rainfall) ~ log(WindSpeed9am),
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+
+```
+```{r logPlots4, echo = TRUE, eval = TRUE}
+par(mfrow = c(1, 2))
+plot(
+  log(Rainfall) ~ WindSpeed3pm,
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+plot(
+  log(Rainfall) ~ log(WindSpeed3pm),
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+
+```
+```{r logplots5, echo = TRUE, eval = TRUE}
+plot(log(Rainfall) ~ Temp9am, data = weather_trn)
+```
+
+```{r logPlots5, echo = FALSE}
+par(mfrow = c(1, 2))
+plot(
+  log(Rainfall) ~ WindSpeed3pm,
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+plot(
+  log(Rainfall) ~ log(WindSpeed3pm),
+  data = weather_trn,
+  col = "darkblue",
+  pch = 20
+)
+
+```
+```{r plotrain, echo = FALSE}
+plot(
+  unique(weather_trn$Cloud9am),
+  log(meanRainfall(weather_trn$Cloud9am)),
+  xlab = "Cloud9am",
+  ylab = "log(Rainfall)",
+  col = "darkblue",
+  pch = 20
+)
+plot(
+  unique(weather_trn$Cloud3pm),
+  log(meanRainfall(weather_trn$Cloud3pm)),
+  xlab = "Cloud3pm",
+  ylab = "log(Rainfall)",
+  col = "darkblue",
+  pch = 20
+)
+```
+
+It appears from the plots that rainfall has a sinusoidal relationship with the month, and wind directions. This result makes sense because those predictors are periodic, like a sine wave. In order to use sinusoidal regression, sin and cos are added to allow for a phase shift in the fitted sine wave.
+
+A backwards AIC will be applied to the following models.
+
+log0 is undefined, and this will be addressed two separate ways. First, all 0 points will be removed from the training data, but not from the test data.
+```{r ron_rain_model, echo = TRUE}
+rain_model = step(
+  lm(
+    log(Rainfall) ~ sin(Date * pi / 6) + cos(Date * pi / 6) + Location +
+      log(Evaporation + 0.1) + Sunshine +
+      sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Cloud9am + Cloud3pm + Temp9am,
+    data = subset(weather_trn, Rainfall > 0)
+  ),
+  trace = FALSE
+)
+```
+Note that LOOCV-RMSE is not adjusted for log scale, which would be difficult given what we the shortcut method of finding LOOCV-RMSE for linear regression.
+```{r ron_rain_model_rsquared, echo = TRUE}
+summary(rain_model)$adj.r.squared
+```
+```{r ron_rain_model_resid, echo = TRUE}
+sqrt(mean((resid(rain_model) / (1 - hatvalues(rain_model))) ^ 2))
+```
+```{r ron_rain_model_test, echo = TRUE}
+sqrt(mean((weather_tst$Rainfall -
+             exp(predict(rain_model, newdata = weather_tst))) ^ 2))
+```
+
+Looking at the Fitted vs Residuals and QQPlot:
+```{r ron_rain_model_qq, echo = TRUE}
+get_plot("fitted vs residuals", "qqplot", rain_model)
+```
+
+Next, padding will be added to Rainfall, so there will be no 0 values.
+```{r ron_rain_model2, echo = TRUE}
+rain_model2 = step(
+  lm(
+    log(Rainfall + 0.1) ~ sin(Date * pi / 6) + cos(Date * pi / 6) + Location +
+      log(Evaporation + 0.1) + Sunshine +
+      sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Cloud9am + Cloud3pm + Temp9am,
+    data = weather_trn
+  ),
+  trace = FALSE
+)
+```
+```{r ron_rain_model2_rsquared, echo = TRUE}
+summary(rain_model2)$adj.r.squared
+```
+```{r ron_rain_model2_hatval, echo = TRUE}
+sqrt(mean((resid(rain_model2) / (1 - hatvalues(rain_model2))) ^ 2))
+```
+```{r ron_tain_model2_tst, echo = TRUE}
+sqrt(mean((weather_tst$Rainfall -
+             (exp(predict(rain_model2, newdata = weather_tst)) - 0.1)) ^ 2))
+```
+```{r ron_rain_model2_qq, echo = TRUE}
+get_plot("fitted vs residuals", "qqplot", rain_model2)
+```
+
+It appears that the cloudiness variables might have a cubic relationship with rainfall.
+
+```{r ron_rain_model3, echo = TRUE}
+rain_model3 = step(
+  lm(
+    log(Rainfall) ~ sin(Date * pi / 6) + cos(Date * pi / 6) + Location +
+      log(Evaporation + 0.1) + Sunshine +
+      sin(WindDir9am * pi / 8) + cos(WindDir9am * pi / 8) +
+      sin(WindDir3pm * pi / 8) + cos(WindDir3pm * pi / 8) +
+      log(WindSpeed9am) + log(WindSpeed3pm) + Humidity9am + Humidity3pm +
+      Pressure9am + Cloud9am + I(Cloud9am ^ 2) + I(Cloud9am ^ 3) +
+      Cloud3pm + I(Cloud3pm ^ 2) + I(Cloud3pm ^ 3) + Temp9am,
+    data = subset(weather_trn, Rainfall > 0)
+  ),
+  trace = FALSE
+)
+```
+```{r ron_rain_model3_rsquared, echo = TRUE}
+summary(rain_model3)$adj.r.squared
+```
+```{r ron_rain_model3_hatval, echo = TRUE}
+sqrt(mean((resid(rain_model3) / (1 - hatvalues(rain_model3))) ^ 2))
+```
+```{r ron_tain_model3_tst, echo = TRUE}
+sqrt(mean((weather_tst$Rainfall -
+             (exp(predict(rain_model3, newdata = weather_tst)) - 0.1)) ^ 2))
+```
+```{r ron_rain_model3_qq, echo = TRUE}
+get_plot("fitted vs residuals", "qqplot", rain_model3)
+```
+
+Next, an interaction model is used.
+```{r ron_raw_rain_model_int, ref.label=c('ron_rain_model_int'), echo = TRUE}
+```
+```{r ron_raw_ron_rain_model4_rsquared, ref.label=c('ron_rain_model4_rsquared'), echo = TRUE}
+```
+```{r ron_raw_ron_rain_model4_hatval, ref.label=c('ron_rain_model4_hatval'), echo = TRUE}
+```
+```{r ron_raw_ron_tain_model4_tst, ref.label=c('ron_tain_model4_tst'), echo = TRUE}
+```
+```{r ron_raw_ron_rain_model4_qq, ref.label=c('ron_rain_model4_qq'), echo = TRUE}
+```
+
+## Appendix E: Raw results from Colton
+
+### Additive only
+
+##### Exhaustive search
+```{r}
+library(leaps)
+#models = summary(regsubsets(Rainfall ~ ., data = weather_sub, really.big = TRUE))
+#models
+```
+
+##### Forward search
+```{r, ref.label=c('colton_additive_1'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_additive_calls'), eval = TRUE}
+```
+
+
+```{r, ref.label=c('colton_additive_anovas'), eval = TRUE}
+```
+
+
+##### Backward search
+```{r, ref.label=c('colton_additive_2'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_additive_2_calls'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_additive_2_anovas'), eval = TRUE}
+```
+
+
+##### Stepwise search
+```{r, ref.label=c('colton_both_1'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_both_calls'), eval = TRUE}
+```
+
+
+```{r, ref.label=c('colton_both_anova'), eval = TRUE}
+```
+
+##### Models
+```{r, eval = TRUE}
+forward_AIC$call
+forward_BIC$call
+forward_AIC$call == forward_BIC$call
+
+backward_AIC$call
+backward_BIC$call
+backward_AIC$call == backward_BIC$call
+
+stepwise_AIC$call
+stepwise_BIC$call
+stepwise_AIC$call == stepwise_BIC$call
+
+```
+
+```{r, eval = TRUE}
+forward_AIC$anova$AIC[length(forward_AIC$anova$AIC)]
+forward_BIC$anova$AIC[length(forward_BIC$anova$AIC)]
+
+backward_AIC$anova$AIC[length(backward_AIC$anova$AIC)]
+backward_BIC$anova$AIC[length(backward_BIC$anova$AIC)]
+
+stepwise_AIC$anova$AIC[length(stepwise_AIC$anova$AIC)]
+stepwise_BIC$anova$AIC[length(stepwise_BIC$anova$AIC)]
+```
+
+
+##### Calculating LOOCV RMSE on train data
+```{r, eval = TRUE}
+calc_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+```
+
+```{r, eval = TRUE}
+forward_AIC_RMSE_loocv = calc_loocv_rmse(forward_AIC)
+forward_BIC_RMSE_loocv = calc_loocv_rmse(forward_BIC)
+forward_AIC_RMSE_loocv
+forward_BIC_RMSE_loocv
+
+backward_AIC_RMSE_loocv = calc_loocv_rmse(backward_AIC)
+backward_BIC_RMSE_loocv = calc_loocv_rmse(backward_BIC)
+backward_AIC_RMSE_loocv
+backward_BIC_RMSE_loocv
+
+stepwise_AIC_RMSE_loocv = calc_loocv_rmse(stepwise_AIC)
+stepwise_BIC_RMSE_loocv = calc_loocv_rmse(stepwise_BIC)
+stepwise_AIC_RMSE_loocv
+stepwise_BIC_RMSE_loocv
+```
+
+##### Calculating RMSE on test data
+```{r, eval = TRUE}
+
+forward_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_AIC, newdata = weather_tst)) ^ 2))
+forward_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_BIC, newdata = weather_tst)) ^ 2))
+forward_AIC_RMSE
+forward_BIC_RMSE
+
+backward_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_AIC, newdata = weather_tst)) ^ 2))
+backward_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_BIC, newdata = weather_tst)) ^ 2))
+backward_AIC_RMSE
+backward_BIC_RMSE
+
+stepwise_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_AIC, newdata = weather_tst)) ^ 2))
+stepwise_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_BIC, newdata = weather_tst)) ^ 2))
+stepwise_AIC_RMSE
+stepwise_BIC_RMSE
+```
+
+##### Adjusted $R^2$
+```{r, eval = TRUE}
+forward_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_AIC)
+forward_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_BIC)
+
+backward_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_AIC)
+backward_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_BIC)
+
+stepwise_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_AIC)
+stepwise_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_BIC)
+```
+
+##### Results
+```{r, eval = TRUE}
+df_table = data.frame(RSME_loocv = c(forward_AIC_RMSE_loocv, forward_BIC_RMSE_loocv, backward_AIC_RMSE_loocv, backward_BIC_RMSE_loocv, stepwise_AIC_RMSE_loocv, stepwise_BIC_RMSE_loocv), 
+                      RMSE_test = c(forward_AIC_RMSE, forward_BIC_RMSE, backward_AIC_RMSE, backward_BIC_RMSE, stepwise_AIC_RMSE, stepwise_BIC_RMSE),
+                      adjusted_r_squared = c(forward_AIC_adj_r_sq, forward_BIC_adj_r_sq, backward_AIC_adj_r_sq, backward_BIC_adj_r_sq, stepwise_AIC_adj_r_sq, stepwise_BIC_adj_r_sq),
+                      model_call = c(toString(forward_AIC$call), toString(forward_BIC$call), toString(backward_AIC$call), toString(backward_BIC$call), toString(stepwise_AIC$call), toString(stepwise_BIC$call)),
+                      row.names = c("forward_AIC", "forward_BIC", "backward_AIC", "backward_BIC", "stepwise_AIC", "stepwise_BIC"))
+df_table
+
+```
+
+```{r, eval = FALSE}
+knitr::kable(df_table)
+```
+
+
+
+### Additive and Interaction
+
+##### Exhaustive search
+```{r}
+library(leaps)
+#models = summary(regsubsets(Rainfall ~ ., data = weather_sub, really.big = TRUE))
+#models
+```
+
+##### Forward search
+```{r, ref.label=c('colton_interaction_1'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_interaction_calls'), eval = TRUE}
+```
+
+
+```{r, ref.label=c('colton_interaction_anovas'), eval = TRUE}
+```
+
+##### Backward search
+```{r, ref.label=c('colton_int_back'), eval = TRUE}
+
+```
+
+```{r, ref.label=c('colton_int_calls'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_int_anova'), eval = TRUE}
+```
+
+
+##### Stepwise search
+```{r, ref.label=c('colton_back_step'), eval = TRUE}
+```
+
+```{r, ref.label=c('colton_back_step_calls'), eval = TRUE}
+```
+
+
+```{r, ref.label=c('colton_back_step_anovas'), eval = TRUE}
+```
+
+##### Models
+```{r, ref.label=c('colton_back_review'), eval = TRUE}
+```
+
+> The best AIC model is `backward_AIC_int`
+
+```{r, ref.label=c('colton_coda_1'), eval = TRUE}
+```
+
+> The best BIC model is `backward_BIC_int`
+
+```{r, ref.label=c('colton_coda_2'), eval = TRUE}
+```
+
+
+## Model Assumptions
+
+### Additive only
+
+##### Plots (only showing plots for best AIC and BIC)
+
+```{r colton_block_1, eval=FALSE, include=FALSE}
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_AIC", name_desc_qq = "QQ Plot of forward_AIC", lm_mod = forward_AIC)
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_BIC", name_desc_qq = "QQ Plot of forward_BIC", lm_mod = forward_BIC)
+```
+
+```{r colton_block_2, eval = TRUE}
+get_plot(name_desc_fit = "Fitted vs Residuals of backward_AIC", name_desc_qq = "QQ Plot of backward_AIC", lm_mod = backward_AIC)
+get_plot(name_desc_fit = "Fitted vs Residuals of backward_BIC", name_desc_qq = "QQ Plot of backward_BIC", lm_mod = backward_BIC)
+```
+
+```{r colton_block_3, eval=FALSE, include=FALSE}
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_AIC", name_desc_qq = "QQ Plot of forward_AIC", lm_mod = forward_AIC)
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_BIC", name_desc_qq = "QQ Plot of forward_BIC", lm_mod = forward_BIC)
+```
+
+##### Assumption tests
+```{r colton_block_4, eval = TRUE}
+shapiro.test(sample(resid(forward_AIC), size = 5000))
+shapiro.test(sample(resid(forward_BIC), size = 5000))
+
+shapiro.test(sample(resid(backward_AIC), size = 5000))
+shapiro.test(sample(resid(backward_BIC), size = 5000))
+
+shapiro.test(sample(resid(stepwise_AIC), size = 5000))
+shapiro.test(sample(resid(stepwise_BIC), size = 5000))
+```
+
+```{r colton_block_5, message=FALSE, warning=FALSE, eval = TRUE}
+library(lmtest)
+
+bptest(forward_AIC)
+bptest(forward_BIC)
+
+bptest(backward_AIC)
+bptest(backward_BIC)
+
+bptest(stepwise_AIC)
+bptest(stepwise_BIC)
+```
+
+### Additive and interaction
+
+##### Plots (only showing plots for best AIC and BIC)
+
+```{r colton_block_6, eval=FALSE, include=FALSE}
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_AIC_int", name_desc_qq = "QQ Plot of forward_AIC_int", lm_mod = forward_AIC_int)
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_BIC_int", name_desc_qq = "QQ Plot of forward_BIC_int", lm_mod = forward_BIC_int)
+```
+
+```{r colton_block_7, eval = TRUE}
+get_plot(name_desc_fit = "Fitted vs Residuals of backward_AIC_int", name_desc_qq = "QQ Plot of backward_AIC_int", lm_mod = backward_AIC_int)
+get_plot(name_desc_fit = "Fitted vs Residuals of backward_BIC_int", name_desc_qq = "QQ Plot of backward_BIC_int", lm_mod = backward_BIC_int)
+```
+
+```{r colton_block_8, eval=FALSE, include=FALSE, eval = TRUE}
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_AIC_int", name_desc_qq = "QQ Plot of forward_AIC_int", lm_mod = forward_AIC_int)
+get_plot(name_desc_fit = "Fitted vs Residuals of forward_BIC_int", name_desc_qq = "QQ Plot of forward_BIC_int", lm_mod = forward_BIC_int)
+```
+
+##### Assumption tests
+```{r colton_block_9, eval = TRUE}
+shapiro.test(sample(resid(forward_AIC_int), size = 5000))
+shapiro.test(sample(resid(forward_BIC_int), size = 5000))
+
+shapiro.test(sample(resid(backward_AIC_int), size = 5000))
+shapiro.test(sample(resid(backward_BIC_int), size = 5000))
+
+shapiro.test(sample(resid(stepwise_AIC_int), size = 5000))
+shapiro.test(sample(resid(stepwise_BIC_int), size = 5000))
+```
+
+```{r colton_block_10, message=FALSE, warning=FALSE, eval = TRUE}
+library(lmtest)
+
+bptest(forward_AIC_int)
+bptest(forward_BIC_int)
+
+bptest(backward_AIC_int)
+bptest(backward_BIC_int)
+
+bptest(stepwise_AIC_int)
+bptest(stepwise_BIC_int)
+```
+
+
+
+
+
+
+## Unusual observations
+
+##### Calculating cook's distance
+```{r colton_block_11, eval = TRUE}
+
+#cooks.distance(forward_AIC)
+#cooks.distance(forward_BIC)
+
+#cooks.distance(backward_AIC)
+#cooks.distance(backward_BIC)
+
+#cooks.distance(stepwise_AIC)
+#cooks.distance(stepwise_BIC)
+
+#cooks.distance(forward_AIC_int)
+#cooks.distance(forward_BIC_int)
+
+cooks_AIC = sort(cooks.distance(backward_AIC_int)[cooks.distance(backward_AIC_int) > 4 / length(backward_AIC_int$fitted.values)], decreasing = TRUE)[1:10]
+cooks_AIC
+cooks_BIC = sort(cooks.distance(backward_BIC_int)[cooks.distance(backward_BIC) > 4 / length(backward_BIC_int$fitted.values)], decreasing = TRUE)[1:10]
+cooks_BIC
+
+#cooks.distance(stepwise_AIC_int)
+#cooks.distance(stepwise_BIC)
+
+```
+
+##### Removing outlier with highest influence
+```{r colton_block_12, eval = TRUE}
+#AIC_ind = as.array(names(cooks_AIC))
+#BIC_ind = as.array(names(cooks_BIC))
+
+#which.max(cooks.distance(backward_AIC_int)[cooks.distance(backward_AIC_int) > 4 / length(backward_AIC_int$fitted.values)])
+
+weather_rmv_obs_AIC = weather_trn[rownames(weather_trn) != "88223", ] #weather_trn[-(AIC_ind), ]
+weather_rmv_obs_BIC = weather_trn[rownames(weather_trn) != "88223", ]
+
+```
+
+##### Refitting models
+```{r colton_block_13, eval = TRUE}
+AIC_refit = lm(formula = Rainfall ~ (Date + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday) * Location, data = weather_rmv_obs_AIC)
+BIC_refit = lm(formula = Rainfall ~ Evaporation + Sunshine + Humidity9am + Pressure9am + Temp9am + RainToday + Location + 
+                                    Evaporation:Location + Humidity9am:Location + Pressure9am:Location + Temp9am:Location + 
+                                    RainToday:Location, data = weather_rmv_obs_BIC)
+```
+
+
+
+##### Calculating LOOCV RMSE on train data
+```{r colton_block_14, eval = TRUE}
+AIC_refit_RMSE_loocv = calc_loocv_rmse(AIC_refit)
+BIC_refit_RMSE_loocv = calc_loocv_rmse(BIC_refit)
+AIC_refit_RMSE_loocv
+BIC_refit_RMSE_loocv
+```
+
+##### Calculating RMSE on test data
+```{r colton_block_15, eval = TRUE}
+
+AIC_refit_RMSE = sqrt(mean((weather_tst$Rainfall - predict(AIC_refit, newdata = weather_tst)) ^ 2))
+BIC_refit_RMSE = sqrt(mean((weather_tst$Rainfall - predict(BIC_refit, newdata = weather_tst)) ^ 2))
+AIC_refit_RMSE
+BIC_refit_RMSE
+
+```
+
+##### Adjusted $R^2$
+```{r colton_block_16, eval = TRUE}
+
+AIC_refit_adj_r_sq = test_adj_r_sqr(pred_val = predict(AIC_refit, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = AIC_refit)
+BIC_refit_adj_r_sq = test_adj_r_sqr(pred_val = predict(BIC_refit, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = BIC_refit)
+
+```
+
+
+##### Results
+```{r colton_block_17, eval = TRUE}
+df_table = data.frame(RSME_loocv = c(AIC_refit_RMSE_loocv, BIC_refit_RMSE_loocv), 
+                      RMSE_test = c(AIC_refit_RMSE, BIC_refit_RMSE),
+                      adjusted_r_squared = c(AIC_refit_adj_r_sq, BIC_refit_adj_r_sq),
+                      model_call = c(toString(AIC_refit$call), toString(BIC_refit$call)),
+                      row.names = c("AIC_refit", "BIC_refit"))
+df_table
+```
+
+
+```{r colton_block_18, eval = TRUE}
+knitr::kable(df_table)
+```
+
+## Appendix F: Raw results from Santu
+
+Added higher order on 'Cloud9am'. After adding higher order on 'Cloud9am', it makes that predictor significant.  
+
+```{r santu_raw_1, ref.label=c('santu_higher_1'), eval = TRUE}
+```
+
+
+```{r, ref.label=c('santu_higher_plots'), eval = TRUE}
+```
+
+
+```{r santu_raw_2}
+
+# Function to calculate LOOCV RMSE
+
+calc_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+
+# Function to calculate RMSE
+
+calc_RMSE = function(pred_vals, actual_vals){
+  sqrt(mean((pred_vals - actual_vals) ^ 2))
+}
+
+```
+
+```{r santu_raw_3}
+
+# Table RSS, Adjusted R square and LOOCV RMSE
+
+
+Model_names = c(
+  'Best Backward AIC', 'Best Backward BIC',
+  'Best Forward AIC', 'Best Forward BIC',
+  'Best Stepwise AIC', 'Best Stepwise BIC'
+)
+
+RMSE_vals = c(
+  calc_RMSE(fitted(best_aic_mod_4_b), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_b), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_aic_mod_4_f), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_f), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_aic_mod_4_s), weather_trn$Rainfall),
+  calc_RMSE(fitted(best_bic_mod_4_s), weather_trn$Rainfall)
+)
+
+Adj_r_sqr_vals = c(
+  summary(best_aic_mod_4_b)$adj.r.squared,
+  summary(best_bic_mod_4_b)$adj.r.squared,
+  summary(best_aic_mod_4_f)$adj.r.squared,
+  summary(best_bic_mod_4_f)$adj.r.squared,
+  summary(best_aic_mod_4_s)$adj.r.squared,
+  summary(best_bic_mod_4_s)$adj.r.squared
+)
+
+Loocv_rmse_vals = c(
+  calc_loocv_rmse(best_aic_mod_4_b),
+  calc_loocv_rmse(best_bic_mod_4_b),
+  calc_loocv_rmse(best_aic_mod_4_f),
+  calc_loocv_rmse(best_bic_mod_4_f),
+  calc_loocv_rmse(best_aic_mod_4_s),
+  calc_loocv_rmse(best_bic_mod_4_s)
+)
+
+# Set info for the table to compare
+
+compare_val = data.frame(
+  Model_names, RMSE_vals, Adj_r_sqr_vals, Loocv_rmse_vals
+)
+
+library(knitr)
+
+kable(compare_val, padding = 5)
+
+```
+
+Based on the above table values it seems Best Forward AIC is the best model since it has lowest LOOCV RMSE, RSS and highest adjusted R square.
+
+```{r santu_raw_4}
+# Best train model's info
+
+coef(best_aic_mod_4_f)
+length(coef(best_aic_mod_4_f))
+
+```
+
+
+```{r santu_raw_5}
+
+# Fit the model with TEST data 
+
+test_pred_val = predict(best_aic_mod_4_f, newdata = weather_tst)
+
+```
+
+```{r santu_raw_6}
+
+# Write function to calculate TEST adjusted R square
+
+test_adj_r_sqr = function(pred_val, actual_val, lm_mod){
+  p = length(coef(lm_mod))
+  n = length(pred_val)
+  test_r_sqr = 1 - ((sum((actual_val - pred_val)^2)) / 
+                      (sum((actual_val - mean(actual_val))^2)))
+  adj_r_sqr = 1 - (((n - 1)/(n - p)) * (1 - (test_r_sqr ^ 2)))
+  
+}
+
+
+```
+
+```{r santu_raw_7}
+
+test_adj_r_sqr_val = 
+  test_adj_r_sqr(test_pred_val, weather_tst$Rainfall, best_aic_mod_4_f)
+
+test_RMSE = calc_RMSE(test_pred_val, weather_tst$Rainfall)
+
+```
+
+```{r santu_raw_8}
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step4 = c(
+  calc_RMSE(fitted(best_aic_mod_4_f), weather_trn$Rainfall),
+  test_RMSE
+)
+
+Adj_r_sqr_vals_step4 = c(
+  summary(best_aic_mod_4_f)$adj.r.squared, test_adj_r_sqr_val
+)
+
+
+# Set info for the table to compare
+
+compare_val_step4 = data.frame(
+  Model_info, RMSE_vals_step4, Adj_r_sqr_vals_step4
+)
+
+
+kable(compare_val_step4, padding = 5)
+
+```
+```{r santu_raw_9}
+
+# Total influential points
+
+sum(cooks.distance(best_aic_mod_4_f) > (4/nrow(weather_trn)))
+
+```
+
+
+```{r santu_raw_10}
+# Use forward AIC to get model after removing influential points
+
+weather_trn_subset = subset(weather_trn, (cooks.distance(best_aic_mod_4_f) <= (4/nrow(weather_trn))))
+
+rain_for_model_alt = lm(Rainfall ~ 1, data = weather_trn_subset)
+
+# Forward AIC
+
+best_aic_mod_4_f_alt = step(rain_for_model_alt,
+                        scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + 
+    Humidity3pm + Pressure9am + Pressure3pm + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + 
+    I(Cloud9am^4) + Cloud3pm + Temp9am + Temp3pm + 
+    RainToday, trace = 0)
+
+# Best model's predictors info
+
+coef(best_aic_mod_4_f_alt)
+length(coef(best_aic_mod_4_f_alt))
+
+```
+
+```{r santu_raw_11}
+
+# Get predicted values using new best forward AIC
+
+test_pred_val_alt = predict(best_aic_mod_4_f_alt, newdata = weather_tst)
+
+# get adj R^2 and RMSE
+
+test_adj_r_sqr_val_alt = 
+  test_adj_r_sqr(test_pred_val_alt, weather_tst$Rainfall, best_aic_mod_4_f_alt)
+
+test_RMSE_alt = calc_RMSE(test_pred_val_alt, weather_tst$Rainfall)
+
+# Get table
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info_alt = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step4_alt = c(
+  calc_RMSE(fitted(best_aic_mod_4_f_alt), weather_trn_subset$Rainfall),
+  test_RMSE_alt
+)
+
+Adj_r_sqr_vals_step4_alt = c(
+  summary(best_aic_mod_4_f_alt)$adj.r.squared, test_adj_r_sqr_val_alt
+)
+
+
+# Set info for the table to compare
+
+compare_val_step4_alt = data.frame(
+  Model_info_alt, RMSE_vals_step4_alt, Adj_r_sqr_vals_step4_alt
+)
+
+
+kable(compare_val_step4_alt, padding = 5)
+
+
+```
+
+***STEP 5 - Creating new model using best models in step 2,3 and 4****
+
+When adding log transformation in Rainfall then calculated Train RMSE and TEST Adjusted R^2 is value is very low.
+
+Adding interaction and Polynomial transformation and only including significant predictors, we have selected below model.
+
+
+
+```{r santu_raw_12}
+
+#weather_model_5 = lm(log(Rainfall) ~ . + log(Evaporation + 0.1) + 
+#                       + log(WindSpeed9am) + log(WindSpeed3pm) + #Evaporation:Location + Humidity9am:Location + Pressure9am:Location + #Temp9am:Location + RainToday:Location + Cloud9am + I(Cloud9am^2) + #I(Cloud9am^3) + I(Cloud9am^4), data = subset(weather_trn, Rainfall > 0))
+
+
+#weather_model_5 = lm(log(Rainfall) ~  Sunshine + Humidity9am + Pressure9am + #Temp9am + RainToday + Evaporation:Location + Humidity9am:Location + #Temp9am:Location + Cloud9am + I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4),
+#                     data = subset(weather_trn, Rainfall > 0))
+
+#subset(weather_trn, Rainfall > 0)
+
+#weather_subset_5 = subset(weather_trn, Rainfall > 0)
+
+weather_step_5_aic= lm(Rainfall ~ (Humidity9am 
+                        + Humidity3pm + Pressure3pm + Evaporation)*RainToday 
+                        + Pressure9am
+                        + I(Cloud9am^2) + I(Cloud9am^3) + I(Cloud9am^4),
+                     data = weather_trn)
+
+#weather_step_5_aic = step(weather_model_5, direction = 'backward', trace = 0)
+summary(weather_step_5_aic)
+summary(weather_step_5_aic)$r.square
+#summary(weather_model_5)$r.square
+
+
+```
+
+```{r santu_raw_13}
+coef(weather_step_5_aic)
+length(coef(weather_step_5_aic))
+```
+
+
+```{r santu_raw_14}
+
+get_plot('Fitted VS Residuals plot of AIC backward Step5', 
+         'QQ plot of AIC backward Step 5',
+         weather_step_5_aic)
+
+```
+
+
+```{r santu_raw_15}
+
+# Get predicted values using new best forward AIC
+
+#test_pred_val_5 = exp(predict(weather_step_5_aic, newdata = weather_tst))
+
+test_pred_val_5 = predict(weather_step_5_aic, newdata = weather_tst)
+
+# get adj R^2 and RMSE
+
+test_adj_r_sqr_val_5 = 
+  test_adj_r_sqr(test_pred_val_5, weather_tst$Rainfall, weather_step_5_aic)
+
+test_RMSE_5 = calc_RMSE(test_pred_val_5, weather_tst$Rainfall)
+
+# Get table
+
+# Table Adjusted R square and RMSE for Train and Test dataset
+
+
+Model_info_5 = c(
+  'Train', 'Test'
+)
+
+RMSE_vals_step5_5 = c(
+  calc_RMSE(fitted(weather_step_5_aic), weather_trn$Rainfall),
+  test_RMSE_5
+)
+
+Adj_r_sqr_vals_step5_5 = c(
+  summary(weather_step_5_aic)$adj.r.squared, test_adj_r_sqr_val_5
+)
+
+
+# Set info for the table to compare
+
+compare_val_step5_5 = data.frame(
+  Model_info_5, RMSE_vals_step5_5, Adj_r_sqr_vals_step5_5
+)
+
+
+kable(compare_val_step5_5, padding = 5)
+
+
+```
+
+
+We are selcting this model since it is using only **`r length(coef(weather_step_5_aic))`** predictors for the fitted model.
+
+And as per above table, Test RMSE value is very close to Train RMSE value. Though TEST Adjusted R Square value is lower than Train Adjusted R square value, we found this model is a good fitted model since it is using less number of predictors and its probability of prediction is very good compare to other models that we selected before.
+
+
+

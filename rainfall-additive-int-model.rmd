@@ -1,0 +1,164 @@
+library(leaps)
+
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+forward_AIC = step(mod_start, scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday, direction = "forward", trace = 0)
+forward_BIC = step(mod_start, scope = Rainfall ~ Date + Location + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday, direction = "forward", trace = 0, k = log(nrow(weather_trn)))
+
+summary(forward_AIC)$call
+forward_AIC$anova
+
+summary(forward_BIC)$call
+forward_BIC$anova
+
+forward_AIC$anova
+forward_BIC$anova
+
+mod_start_bkw = lm(Rainfall ~ ., data = weather_trn)
+backward_AIC = step(mod_start_bkw, direction = "backward", trace = 0)
+backward_BIC = step(mod_start_bkw, direction = "backward", k = log(nrow(weather_trn)), trace = 0)
+
+summary(backward_AIC)$call
+backward_AIC$anova
+
+
+summary(backward_BIC)$call
+backward_BIC$anova
+
+backward_AIC$anova
+backward_BIC$anova
+
+summary(stepwise_AIC)$call
+stepwise_AIC$anova
+
+
+summary(stepwise_BIC)$call
+stepwise_BIC$anova
+
+forward_AIC_RMSE_loocv = calc_loocv_rmse(forward_AIC)
+forward_BIC_RMSE_loocv = calc_loocv_rmse(forward_BIC)
+
+backward_AIC_RMSE_loocv = calc_loocv_rmse(backward_AIC)
+backward_BIC_RMSE_loocv = calc_loocv_rmse(backward_BIC)
+
+stepwise_AIC_RMSE_loocv = calc_loocv_rmse(stepwise_AIC)
+stepwise_BIC_RMSE_loocv = calc_loocv_rmse(stepwise_BIC)
+
+forward_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_AIC, newdata = weather_tst)) ^ 2))
+forward_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_BIC, newdata = weather_tst)) ^ 2))
+
+backward_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_AIC, newdata = weather_tst)) ^ 2))
+backward_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_BIC, newdata = weather_tst)) ^ 2))
+
+stepwise_AIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_AIC, newdata = weather_tst)) ^ 2))
+stepwise_BIC_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_BIC, newdata = weather_tst)) ^ 2))
+
+forward_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_AIC)
+forward_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_BIC)
+
+backward_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_AIC)
+backward_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_BIC)
+
+stepwise_AIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_AIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_AIC)
+stepwise_BIC_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_BIC, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_BIC)
+
+df_table = data.frame(RSME_loocv = c(forward_AIC_RMSE_loocv, forward_BIC_RMSE_loocv, backward_AIC_RMSE_loocv, backward_BIC_RMSE_loocv, stepwise_AIC_RMSE_loocv, stepwise_BIC_RMSE_loocv), 
+                      RMSE_test = c(forward_AIC_RMSE, forward_BIC_RMSE, backward_AIC_RMSE, backward_BIC_RMSE, stepwise_AIC_RMSE, stepwise_BIC_RMSE),
+                      adjusted_r_squared = c(forward_AIC_adj_r_sq, forward_BIC_adj_r_sq, backward_AIC_adj_r_sq, backward_BIC_adj_r_sq, stepwise_AIC_adj_r_sq, stepwise_BIC_adj_r_sq),
+                      model_call = c(toString(forward_AIC$call), toString(forward_BIC$call), toString(backward_AIC$call), toString(backward_BIC$call), toString(stepwise_AIC$call), toString(stepwise_BIC$call)),
+                      row.names = c("forward_AIC", "forward_BIC", "backward_AIC", "backward_BIC", "stepwise_AIC", "stepwise_BIC"))
+
+knitr::kable(df_table)
+
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+forward_AIC_int = step(mod_start, scope = Rainfall ~ (Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday + Date) * Location, direction = "forward", trace = 0)
+forward_BIC_int = step(mod_start, scope = Rainfall ~ (Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday + Date) * Location, direction = "forward", trace = 0, k = log(nrow(weather_trn)))
+
+
+mod_start = lm(Rainfall ~ 1, data = weather_trn)
+forward_AIC_int = step(mod_start, scope = Rainfall ~ (Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday + Date) * Location, direction = "forward", trace = 0)
+forward_BIC_int = step(mod_start, scope = Rainfall ~ (Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday + Date) * Location, direction = "forward", trace = 0, k = log(nrow(weather_trn)))
+
+summary(forward_AIC_int)$call
+forward_AIC_int$anova
+
+summary(forward_BIC_int)$call
+forward_BIC_int$anova
+
+forward_AIC_int_RMSE_loocv = calc_loocv_rmse(forward_AIC_int)
+forward_BIC_int_RMSE_loocv = calc_loocv_rmse(forward_BIC_int)
+
+backward_AIC_int_RMSE_loocv = calc_loocv_rmse(backward_AIC_int)
+backward_BIC_int_RMSE_loocv = calc_loocv_rmse(backward_BIC_int)
+
+stepwise_AIC_int_RMSE_loocv = calc_loocv_rmse(stepwise_AIC_int)
+stepwise_BIC_int_RMSE_loocv = calc_loocv_rmse(stepwise_BIC_int)
+
+forward_AIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_AIC_int, newdata = weather_tst)) ^ 2))
+forward_BIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(forward_BIC_int, newdata = weather_tst)) ^ 2))
+
+backward_AIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_AIC_int, newdata = weather_tst)) ^ 2))
+backward_BIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(backward_BIC_int, newdata = weather_tst)) ^ 2))
+
+stepwise_AIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_AIC_int, newdata = weather_tst)) ^ 2))
+stepwise_BIC_int_RMSE = sqrt(mean((weather_tst$Rainfall - predict(stepwise_BIC_int, newdata = weather_tst)) ^ 2))
+
+forward_AIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_AIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_AIC_int)
+forward_BIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(forward_BIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = forward_BIC_int)
+
+backward_AIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_AIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_AIC_int)
+backward_BIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(backward_BIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = backward_BIC_int)
+
+stepwise_AIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_AIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_AIC_int)
+stepwise_BIC_int_adj_r_sq = test_adj_r_sqr(pred_val = predict(stepwise_BIC_int, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = stepwise_BIC_int)
+
+df_table = data.frame(RSME_loocv = c(forward_AIC_int_RMSE_loocv, forward_BIC_int_RMSE_loocv, backward_AIC_int_RMSE_loocv, backward_BIC_int_RMSE_loocv, stepwise_AIC_int_RMSE_loocv, stepwise_BIC_int_RMSE_loocv), 
+                      RMSE_test = c(forward_AIC_int_RMSE, forward_BIC_int_RMSE, backward_AIC_int_RMSE, backward_BIC_int_RMSE, stepwise_AIC_int_RMSE, stepwise_BIC_int_RMSE),
+                      adjusted_r_squared = c(forward_AIC_int_adj_r_sq, forward_BIC_int_adj_r_sq, backward_AIC_int_adj_r_sq, backward_BIC_int_adj_r_sq, stepwise_AIC_int_adj_r_sq, stepwise_BIC_int_adj_r_sq),
+                      model_call = c(toString(forward_AIC_int$call), toString(forward_BIC_int$call), toString(backward_AIC_int$call), toString(backward_BIC_int$call), toString(stepwise_AIC_int$call), toString(stepwise_BIC_int$call)),
+                      row.names = c("forward_AIC_int", "forward_BIC_int", "backward_AIC_int", "backward_BIC_int", "stepwise_AIC_int", "stepwise_BIC_int"))
+
+knitr::kable(df_table)
+
+backward_AIC_int$call
+hist(resid(backward_AIC_int), main = "Histogram for \nAIC backward using\n Additive Interactions")
+get_plot('Fitted VS Residuals plot\nof AIC backward using\nAdditive and Interactions', 
+         'QQ plot of AIC backward\nusing Additive and Interactions',
+         backward_AIC_int)
+
+backward_BIC_int$call
+hist(resid(backward_AIC_int), main = "Histogram for \nBIC backward using\n Additive Interactions")
+get_plot('Fitted VS Residuals plot\nof BIC backward using\nAdditive and Interactions', 
+         'QQ plot of BIC backward\nusing Additive and Interactions',
+         backward_AIC_int)
+
+cooks_AIC = sort(cooks.distance(backward_AIC_int)[cooks.distance(backward_AIC_int) > 4 / length(backward_AIC_int$fitted.values)], decreasing = TRUE)[1:10]
+#cooks_AIC
+cooks_BIC = sort(cooks.distance(backward_BIC_int)[cooks.distance(backward_BIC) > 4 / length(backward_BIC_int$fitted.values)], decreasing = TRUE)[1:10]
+#cooks_BIC
+
+weather_rmv_obs_AIC = weather_trn[rownames(weather_trn) != "88223", ] #weather_trn[-(AIC_ind), ]
+weather_rmv_obs_BIC = weather_trn[rownames(weather_trn) != "88223", ]
+
+AIC_refit = lm(formula = Rainfall ~ (Date + Evaporation + Sunshine + Humidity9am + Pressure9am + Cloud9am + Temp9am + RainToday) * Location, data = weather_rmv_obs_AIC)
+BIC_refit = lm(formula = Rainfall ~ Evaporation + Sunshine + Humidity9am + Pressure9am + Temp9am + RainToday + Location + 
+                                    Evaporation:Location + Humidity9am:Location + Pressure9am:Location + Temp9am:Location + 
+                                    RainToday:Location, data = weather_rmv_obs_BIC)
+
+AIC_refit_RMSE_loocv = calc_loocv_rmse(AIC_refit)
+BIC_refit_RMSE_loocv = calc_loocv_rmse(BIC_refit)
+
+AIC_refit_RMSE = sqrt(mean((weather_tst$Rainfall - predict(AIC_refit, newdata = weather_tst)) ^ 2))
+BIC_refit_RMSE = sqrt(mean((weather_tst$Rainfall - predict(BIC_refit, newdata = weather_tst)) ^ 2))
+
+AIC_refit_adj_r_sq = test_adj_r_sqr(pred_val = predict(AIC_refit, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = AIC_refit)
+BIC_refit_adj_r_sq = test_adj_r_sqr(pred_val = predict(BIC_refit, newdata = weather_tst), actual_val = weather_tst$Rainfall, lm_mod = BIC_refit)
+
+df_table = data.frame(RSME_loocv = c(AIC_refit_RMSE_loocv, BIC_refit_RMSE_loocv), 
+                      RMSE_test = c(AIC_refit_RMSE, BIC_refit_RMSE),
+                      adjusted_r_squared = c(AIC_refit_adj_r_sq, BIC_refit_adj_r_sq),
+                      model_call = c(toString(AIC_refit$call), toString(BIC_refit$call)),
+                      row.names = c("AIC_refit", "BIC_refit"))
+
+knitr::kable(df_table)
+
+

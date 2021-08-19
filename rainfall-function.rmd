@@ -1,0 +1,44 @@
+# Create function to plot Fitted vs Residuals and QQ plots
+
+get_plot = function(name_desc_fit, name_desc_qq, lm_mod){
+  
+  par(mfrow = c(1, 3))
+  
+  # Fitted vs Residuals plot
+  plot(fitted(lm_mod), resid(lm_mod), col = "darkblue", pch = 20,
+       xlab = "Fitted", ylab = "Residuals", main = name_desc_fit)
+  abline(h = 0, col = "darkorange", lwd = 2)
+     
+  # QQ plot
+  
+  qqnorm(resid(lm_mod), main = name_desc_qq, col = "darkgreen")
+  qqline(resid(lm_mod), col = "dodgerblue", lwd = 2)
+     
+}
+
+# Function to calculate LOOCV RMSE
+
+calc_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+
+# Function to calculate RMSE
+
+calc_RMSE = function(pred_vals, actual_vals){
+  sqrt(mean((pred_vals - actual_vals) ^ 2))
+}
+
+# Function to calculate TEST adjusted R square
+
+test_adj_r_sqr = function(pred_val, actual_val, lm_mod){
+  p = length(coef(lm_mod))
+  n = length(pred_val)
+  test_r_sqr = 1 - ((sum((actual_val - pred_val)^2)) / 
+                      (sum((actual_val - mean(actual_val))^2)))
+  adj_r_sqr = 1 - (((n - 1)/(n - p)) * (1 - (test_r_sqr ^ 2)))
+  
+}
+
+make_conf_mat = function(predicted, actual) {
+table(predicted = predicted, actual = actual)
+}
